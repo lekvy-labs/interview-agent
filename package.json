@@ -1,14 +1,29 @@
 {
   "name": "interview-agent",
-  "version": "0.1.0",
-  "description": "TypeScript Node.js SDK boilerplate.",
+  "version": "0.2.0",
+  "description": "AI Interview Agent SDK — server and React client.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "server": ["./dist/server.d.ts"],
+      "react": ["./dist/react.d.ts"]
+    }
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "require": "./dist/server.cjs",
+      "import": "./dist/server.js"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.js"
     }
   },
   "files": [
@@ -23,17 +38,34 @@
     "test:watch": "vitest"
   },
   "keywords": [
-    "sdk",
-    "typescript",
-    "node"
+    "interview",
+    "ai",
+    "gemini",
+    "voice",
+    "sdk"
   ],
   "author": "",
   "license": "ISC",
   "engines": {
     "node": ">=18"
   },
+  "peerDependencies": {
+    "react": ">=18",
+    "socket.io-client": ">=4"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "socket.io-client": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/react": "^19.2.14",
+    "@types/ws": "^8.18.1",
+    "socket.io-client": "^4.8.0",
     "tsup": "^8.5.0",
     "typescript": "^5.8.2",
     "vitest": "^3.2.4"

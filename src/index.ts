@@ -1,3 +1,2 @@
-export { APIError, SDKError } from './errors.js';
-export { SDKClient, buildUrl } from './client.js';
-export type { ClientOptions, QueryValue, RequestOptions, SDKResponse } from './types.js';
+// Root entry — re-exports shared types used by both server and react SDKs
+export * from './shared/types.js';
