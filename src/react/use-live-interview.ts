@@ -18,6 +18,8 @@
  *     audio-response       — { audio: string (base64 24 kHz Int16 PCM) }
  *     transcript           — { role: 'user'|'model', text: string }
  *     interrupted          — AI was cut off; stop playback immediately
+ *     code-sharing-started — AI began code sharing; show code editor to candidate
+ *     code-sharing-ended   — AI concluded code sharing; hide code editor
  *     session-ended        — session terminated by server/client request
  *     interview-concluded  — AI naturally ended the interview via tool call
  *     error                — { message: string }
@@ -57,6 +59,7 @@ export interface UseLiveInterviewReturn {
   status: LiveInterviewStatus;
   transcript: TranscriptEntry[];
   isUserSpeaking: boolean;
+  codeSharingActive: boolean;
   start: () => Promise<void>;
   stop: () => void;
 }
@@ -84,6 +87,7 @@ export function useLiveInterview(options: UseLiveInterviewOptions): UseLiveInter
   const [status, setStatus] = useState<LiveInterviewStatus>('idle');
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [isUserSpeaking, setIsUserSpeaking] = useState(false);
+  const [codeSharingActive, setCodeSharingActive] = useState(false);
 
   const socketRef = useRef<Socket | null>(null);
   const captureRef = useRef<AudioCapture | null>(null);
@@ -102,6 +106,7 @@ export function useLiveInterview(options: UseLiveInterviewOptions): UseLiveInter
       socketRef.current = null;
     }
     setIsUserSpeaking(false);
+    setCodeSharingActive(false);
   }, []);
 
   const stop = useCallback(() => {
@@ -141,6 +146,14 @@ export function useLiveInterview(options: UseLiveInterviewOptions): UseLiveInter
       socket.on('interview-concluded', () => {
         cleanup();
         setStatus('idle');
+      });
+
+      socket.on('code-sharing-started', () => {
+        setCodeSharingActive(true);
+      });
+
+      socket.on('code-sharing-ended', () => {
+        setCodeSharingActive(false);
       });
 
       socket.on('audio-response', (data: { audio: string }) => {
@@ -218,5 +231,5 @@ export function useLiveInterview(options: UseLiveInterviewOptions): UseLiveInter
     };
   }, [cleanup]);
 
-  return { status, transcript, isUserSpeaking, start, stop };
+  return { status, transcript, isUserSpeaking, codeSharingActive, start, stop };
 }

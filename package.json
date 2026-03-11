@@ -1,6 +1,6 @@
 {
   "name": "@lekvylabs/interview-agent",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "AI Interview Agent SDK — server and React client.",
   "type": "module",
   "main": "./dist/index.js",
