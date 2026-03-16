@@ -9,9 +9,11 @@ export class AudioPlayback {
   private currentSource: AudioBufferSourceNode | null = null;
   private ctx: AudioContext | null = null;
   private sampleRate: number;
+  private onIdle?: () => void;
 
-  constructor(sampleRate: number) {
+  constructor(sampleRate: number, onIdle?: () => void) {
     this.sampleRate = sampleRate;
+    this.onIdle = onIdle;
   }
 
   /** Must be called before enqueue. Shares the AudioContext from AudioCapture. */
@@ -38,11 +40,13 @@ export class AudioPlayback {
     }
     this.queue = [];
     this.playing = false;
+    this.onIdle?.();
   }
 
   private playNext(): void {
     if (this.queue.length === 0 || !this.ctx || this.ctx.state === 'closed') {
       this.playing = false;
+      this.onIdle?.();
       return;
     }
 
@@ -74,6 +78,7 @@ export class AudioPlayback {
         this.playNext();
       } else {
         this.playing = false;
+        this.onIdle?.();
       }
     };
 

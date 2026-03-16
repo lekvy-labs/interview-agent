@@ -158,6 +158,91 @@ const { status, transcript, isUserSpeaking, start, stop } = useInterview(options
 | `start()` | `() => Promise<void>` | Request mic permission, connect WS, begin piping audio |
 | `stop()` | `() => void` | Disconnect everything, release mic |
 
+#### `useLiveInterview(options)`
+
+Socket.IO hook for the NestJS-style live interview gateway.
+
+```ts
+const {
+  status,
+  transcript,
+  isUserSpeaking,
+  interviewerActivity,
+  isAssistantSpeaking,
+  codeSharingActive,
+  sharedCode,
+  start,
+  stop,
+} = useLiveInterview(options);
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `serverUrl` | `string` | — | **Required.** Base URL for the Socket.IO server |
+| `interviewId` | `string` | — | **Required.** Interview/session identifier sent as a query param |
+| `token` | `string` | — | **Required.** Bearer token sent through Socket.IO auth |
+| `namespace` | `string` | `'/live-interview'` | Socket.IO namespace |
+| `targetSampleRate` | `number` | `16000` | Outgoing PCM sample rate |
+| `aiSampleRate` | `number` | `24000` | Incoming AI audio sample rate |
+| `vadThreshold` | `number` | `0.001` | Energy threshold for local user VAD |
+
+**Returns:**
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | `'idle' \| 'connecting' \| 'active' \| 'error'` | Current live session status |
+| `transcript` | `TranscriptEntry[]` | Array of `{ role, text }` entries |
+| `isUserSpeaking` | `boolean` | `true` when the local mic energy exceeds the VAD threshold |
+| `interviewerActivity` | `'speaking' \| 'listening' \| 'thinking'` | Interviewer activity from socket events, with fallback to audio lifecycle events |
+| `isAssistantSpeaking` | `boolean` | Convenience alias for `interviewerActivity === 'speaking'` |
+| `codeSharingActive` | `boolean` | `true` while the interviewer has active code sharing enabled |
+| `sharedCode` | `{ code: string; language?: string; title?: string } \| null` | Latest code-sharing payload from the server, or `null` when inactive |
+| `start()` | `() => Promise<void>` | Connect Socket.IO, request mic permission, and begin piping audio |
+| `stop()` | `() => void` | End the live session and release resources |
+
+**Example:**
+
+```tsx
+import { useLiveInterview } from 'interview-agent/react';
+
+function LiveInterviewRoom() {
+  const {
+    status,
+    transcript,
+    interviewerActivity,
+    isAssistantSpeaking,
+    codeSharingActive,
+    sharedCode,
+    start,
+    stop,
+  } = useLiveInterview({
+    serverUrl: 'http://localhost:3000',
+    interviewId: 'interview_123',
+    token: 'jwt-or-session-token',
+  });
+
+  return (
+    <div>
+      <p>Status: {status}</p>
+      <p>Interviewer: {interviewerActivity}</p>
+      <p>Speaking: {String(isAssistantSpeaking)}</p>
+      <p>Code sharing: {String(codeSharingActive)}</p>
+      {sharedCode && (
+        <>
+          <p>Shared title: {sharedCode.title ?? 'Untitled'}</p>
+          <pre>{sharedCode.code}</pre>
+        </>
+      )}
+      <button onClick={start}>Start</button>
+      <button onClick={stop}>Stop</button>
+      {transcript.map((entry, i) => (
+        <p key={i}><b>{entry.role}:</b> {entry.text}</p>
+      ))}
+    </div>
+  );
+}
+```
+
 #### `InterviewPanel`
 
 Pre-built React component rendering a complete interview UI. Accepts all `useInterview` options plus an optional `style` prop.
@@ -210,6 +295,27 @@ import type {
 | `transcript` | `{ role, text }` | Real-time transcription |
 | `turnComplete` | — | AI finished speaking |
 | `error` | `{ text: string }` | Error message |
+
+## Live Socket.IO Events
+
+For `useLiveInterview()` on the `/live-interview` namespace:
+
+**Client → Server:**
+- `audio-chunk` → `{ audio: string }`
+- `end-session` → no payload
+
+**Server → Client:**
+- `session-ready` → no payload
+- `audio-response` → `{ audio: string }`
+- `transcript` → `{ role: 'user' | 'model', text: string }`
+- `interviewer-activity` → `{ state: 'speaking' | 'listening' | 'thinking' }` (optional but recommended)
+- `code-sharing-content` → `{ code: string, language?: string, title?: string }`
+- `interrupted` → no payload
+- `code-sharing-started` → no payload
+- `code-sharing-ended` → no payload
+- `session-ended` → no payload
+- `interview-concluded` → no payload
+- `error` → `{ message: string }`
 
 ---
 

@@ -4,7 +4,15 @@
  * Usage:
  *   import { useLiveInterview } from 'interview-agent/react';
  *
- *   const { status, transcript, isUserSpeaking, start, stop } = useLiveInterview({
+ *   const {
+ *     status,
+ *     transcript,
+ *     isUserSpeaking,
+ *     interviewerActivity,
+ *     isAssistantSpeaking,
+ *     start,
+ *     stop,
+ *   } = useLiveInterview({
  *     serverUrl: 'http://localhost:3000',
  *     interviewId: '...',
  *     token: '...',
@@ -17,6 +25,8 @@
  *     session-ready        — Gemini session open, safe to stream audio
  *     audio-response       — { audio: string (base64 24 kHz Int16 PCM) }
  *     transcript           — { role: 'user'|'model', text: string }
+ *     interviewer-activity — { state: 'speaking'|'listening'|'thinking' } (optional)
+ *     code-sharing-content — { code: string, language?: string, title?: string }
  *     interrupted          — AI was cut off; stop playback immediately
  *     code-sharing-started — AI began code sharing; show code editor to candidate
  *     code-sharing-ended   — AI concluded code sharing; hide code editor
@@ -54,14 +64,37 @@ export interface UseLiveInterviewOptions {
 }
 
 export type LiveInterviewStatus = 'idle' | 'connecting' | 'active' | 'error';
+export type InterviewerActivity = 'speaking' | 'listening' | 'thinking';
+export interface SharedCodeState {
+  code: string;
+  language?: string;
+  title?: string;
+}
 
 export interface UseLiveInterviewReturn {
   status: LiveInterviewStatus;
   transcript: TranscriptEntry[];
   isUserSpeaking: boolean;
+  interviewerActivity: InterviewerActivity;
+  isAssistantSpeaking: boolean;
   codeSharingActive: boolean;
+  sharedCode: SharedCodeState | null;
   start: () => Promise<void>;
   stop: () => void;
+}
+
+interface InterviewerActivityEvent {
+  state: InterviewerActivity;
+}
+
+interface CodeSharingContentEvent {
+  code: string;
+  language?: string;
+  title?: string;
+}
+
+function isInterviewerActivity(value: unknown): value is InterviewerActivity {
+  return value === 'speaking' || value === 'listening' || value === 'thinking';
 }
 
 function int16ToBase64(int16: Int16Array): string {
@@ -87,26 +120,38 @@ export function useLiveInterview(options: UseLiveInterviewOptions): UseLiveInter
   const [status, setStatus] = useState<LiveInterviewStatus>('idle');
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [isUserSpeaking, setIsUserSpeaking] = useState(false);
+  const [interviewerActivity, setInterviewerActivity] = useState<InterviewerActivity>('listening');
   const [codeSharingActive, setCodeSharingActive] = useState(false);
+  const [sharedCode, setSharedCode] = useState<SharedCodeState | null>(null);
 
   const socketRef = useRef<Socket | null>(null);
   const captureRef = useRef<AudioCapture | null>(null);
   const playbackRef = useRef<AudioPlayback | null>(null);
+  const supportsActivityEventsRef = useRef(false);
   const isUserSpeakingRef = useRef(false);
   isUserSpeakingRef.current = isUserSpeaking;
+
+  const setFallbackInterviewerActivity = useCallback((next: InterviewerActivity) => {
+    if (!supportsActivityEventsRef.current) {
+      setInterviewerActivity(next);
+    }
+  }, []);
 
   const cleanup = useCallback(() => {
     captureRef.current?.stop();
     captureRef.current = null;
     playbackRef.current?.stop();
     playbackRef.current = null;
+    supportsActivityEventsRef.current = false;
     if (socketRef.current) {
       socketRef.current.removeAllListeners();
       socketRef.current.disconnect();
       socketRef.current = null;
     }
     setIsUserSpeaking(false);
+    setInterviewerActivity('listening');
     setCodeSharingActive(false);
+    setSharedCode(null);
   }, []);
 
   const stop = useCallback(() => {
@@ -120,6 +165,8 @@ export function useLiveInterview(options: UseLiveInterviewOptions): UseLiveInter
   const start = useCallback(async () => {
     setStatus('connecting');
     setTranscript([]);
+    setInterviewerActivity('listening');
+    supportsActivityEventsRef.current = false;
 
     try {
       const socket = io(`${serverUrl}${namespace}`, {
@@ -139,11 +186,13 @@ export function useLiveInterview(options: UseLiveInterviewOptions): UseLiveInter
       });
 
       socket.on('session-ended', () => {
+        setSharedCode(null);
         cleanup();
         setStatus('idle');
       });
 
       socket.on('interview-concluded', () => {
+        setSharedCode(null);
         cleanup();
         setStatus('idle');
       });
@@ -154,12 +203,31 @@ export function useLiveInterview(options: UseLiveInterviewOptions): UseLiveInter
 
       socket.on('code-sharing-ended', () => {
         setCodeSharingActive(false);
+        setSharedCode(null);
+      });
+
+      socket.on('code-sharing-content', (data: CodeSharingContentEvent) => {
+        if (typeof data?.code === 'string') {
+          setSharedCode({
+            code: data.code,
+            language: data.language,
+            title: data.title,
+          });
+        }
       });
 
       socket.on('audio-response', (data: { audio: string }) => {
         if (data.audio) {
+          setFallbackInterviewerActivity('speaking');
           const float32 = decodeBase64PcmToFloat32(data.audio);
           playbackRef.current?.enqueue(float32);
+        }
+      });
+
+      socket.on('interviewer-activity', (data: InterviewerActivityEvent) => {
+        if (isInterviewerActivity(data?.state)) {
+          supportsActivityEventsRef.current = true;
+          setInterviewerActivity(data.state);
         }
       });
 
@@ -180,6 +248,7 @@ export function useLiveInterview(options: UseLiveInterviewOptions): UseLiveInter
 
       socket.on('interrupted', () => {
         playbackRef.current?.stop();
+        setFallbackInterviewerActivity('listening');
       });
 
       // Start mic + audio pipeline once Gemini signals ready
@@ -189,7 +258,9 @@ export function useLiveInterview(options: UseLiveInterviewOptions): UseLiveInter
           const capture = new AudioCapture();
           captureRef.current = capture;
 
-          const playback = new AudioPlayback(aiSampleRate);
+          const playback = new AudioPlayback(aiSampleRate, () => {
+            setFallbackInterviewerActivity('thinking');
+          });
           playbackRef.current = playback;
 
           await capture.start({
@@ -212,6 +283,7 @@ export function useLiveInterview(options: UseLiveInterviewOptions): UseLiveInter
             playback.setContext(capture.context);
           }
 
+          setFallbackInterviewerActivity('listening');
           setStatus('active');
         } catch {
           cleanup();
@@ -222,7 +294,17 @@ export function useLiveInterview(options: UseLiveInterviewOptions): UseLiveInter
       cleanup();
       setStatus('error');
     }
-  }, [serverUrl, namespace, token, interviewId, targetSampleRate, aiSampleRate, vadThreshold, cleanup]);
+  }, [
+    serverUrl,
+    namespace,
+    token,
+    interviewId,
+    targetSampleRate,
+    aiSampleRate,
+    vadThreshold,
+    cleanup,
+    setFallbackInterviewerActivity,
+  ]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -231,5 +313,15 @@ export function useLiveInterview(options: UseLiveInterviewOptions): UseLiveInter
     };
   }, [cleanup]);
 
-  return { status, transcript, isUserSpeaking, codeSharingActive, start, stop };
+  return {
+    status,
+    transcript,
+    isUserSpeaking,
+    interviewerActivity,
+    isAssistantSpeaking: interviewerActivity === 'speaking',
+    codeSharingActive,
+    sharedCode,
+    start,
+    stop,
+  };
 }
