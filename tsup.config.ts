@@ -10,7 +10,7 @@ export default defineConfig([
     sourcemap: true,
     target: 'node18',
     outDir: 'dist',
-    external: ['ws'],
+    external: ['ws', '@google/genai'],
   },
   // React SDK — browser target
   {
