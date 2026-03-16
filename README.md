@@ -1,13 +1,15 @@
-# interview-agent
+# @lekvylabs/interview-agent
 
 AI Interview Agent SDK — a TypeScript library for real-time voice interviews powered by the Gemini Multimodal Live API.
+
+**This SDK is used internally for the Interviewer agent of Lekvy Backend.**
 
 Two subpath exports:
 
 | Import | Target | Purpose |
 |---|---|---|
-| `interview-agent/server` | Node.js | WebSocket server that proxies audio between browser clients and Gemini |
-| `interview-agent/react` | Browser | React hook + component for mic capture, audio playback, and live transcript |
+| `@lekvylabs/interview-agent/server` | Node.js | WebSocket server that proxies audio between browser clients and Gemini |
+| `@lekvylabs/interview-agent/react` | Browser | React hook + component for mic capture, audio playback, and live transcript |
 
 ---
 
@@ -19,7 +21,7 @@ From a sibling project (e.g. `../core-api`):
 npm install ../interview-agent
 ```
 
-This creates a symlink in `node_modules/interview-agent` pointing at the local folder. **You must build first:**
+This creates a symlink in `node_modules/@lekvylabs/interview-agent` pointing at the local folder. **You must build first:**
 
 ```bash
 cd interview-agent
@@ -36,7 +38,7 @@ After any SDK change, re-run `npm run build` — consumers pick up the new `dist
 ### Backend (Node.js)
 
 ```ts
-import { InterviewServer } from 'interview-agent/server';
+import { InterviewServer } from '@lekvylabs/interview-agent/server';
 
 const server = new InterviewServer({
   geminiApiKey: process.env.GEMINI_API_KEY!,
@@ -53,12 +55,14 @@ await server.attach(httpServer);
 await server.listen(3001);
 ```
 
+The server registers three built-in tools by default: `conclude_interview`, `start_code_sharing`, and `end_code_sharing`. Override via `config.tools`.
+
 ### Frontend (React)
 
-**Option A — Hook (full control):**
+**Option A — WebSocket hook (direct to InterviewServer):**
 
 ```tsx
-import { useInterview } from 'interview-agent/react';
+import { useInterview } from '@lekvylabs/interview-agent/react';
 
 function InterviewRoom() {
   const { status, transcript, isUserSpeaking, start, stop } = useInterview({
@@ -78,10 +82,27 @@ function InterviewRoom() {
 }
 ```
 
-**Option B — Drop-in component:**
+**Option B — Socket.IO hook (Lekvy Backend gateway):**
+
+For the NestJS live-interview gateway, use `useLiveInterview` with `serverUrl`, `interviewId`, and `token`. Supports code sharing, interviewer activity, and session lifecycle.
 
 ```tsx
-import { InterviewPanel } from 'interview-agent/react';
+import { useLiveInterview } from '@lekvylabs/interview-agent/react';
+
+function LiveInterviewRoom() {
+  const { status, transcript, codeSharingActive, sharedCode, start, stop } = useLiveInterview({
+    serverUrl: 'http://localhost:3000',
+    interviewId: 'interview_123',
+    token: 'jwt-or-session-token',
+  });
+  // ...
+}
+```
+
+**Option C — Drop-in component:**
+
+```tsx
+import { InterviewPanel } from '@lekvylabs/interview-agent/react';
 
 function App() {
   return <InterviewPanel wsUrl="ws://localhost:3001/ws" />;
@@ -92,7 +113,7 @@ function App() {
 
 ## API Reference
 
-### `interview-agent/server`
+### `@lekvylabs/interview-agent/server`
 
 #### `InterviewServer`
 
@@ -103,38 +124,46 @@ new InterviewServer(config: InterviewServerConfig)
 | Config field | Type | Required | Description |
 |---|---|---|---|
 | `geminiApiKey` | `string` | ✅ | Gemini API key |
-| `systemInstruction` | `string` | ✅ | System prompt sent to Gemini at session start |
-| `model` | `string` | — | Override model ID (auto-detected if omitted) |
-| `apiVersion` | `'v1alpha' \| 'v1beta'` | — | Override API version (auto-detected if omitted) |
+| `systemInstruction` | `string` | — | System prompt sent to Gemini at session start |
+| `model` | `string` | — | Override model ID (default: `gemini-2.5-flash-native-audio-preview-12-2025`) |
+| `tools` | `FunctionDeclaration[]` | — | Tool declarations for Gemini. Defaults to `conclude_interview`, `start_code_sharing`, `end_code_sharing`. Set `[]` to disable. |
+| `voiceActivityDetection` | `VoiceActivityDetectionConfig` | — | VAD sensitivity and silence duration |
+| `triggerMessage` | `string \| false` | — | Message sent after session opens to trigger greeting. Default: `'START_INTERVIEW'`. Set `false` to disable. |
+| `injectElapsedTime` | `boolean` | — | Inject `[elapsed: Xs]` context after each AI turn (default: `true`) |
+| `maxReconnectAttempts` | `number` | — | Max reconnect attempts on Gemini disconnect (default: `3`) |
+| `reconnectDelayMs` | `number` | — | Delay between reconnect attempts (default: `2000`) |
 | `path` | `string` | — | WebSocket path (default: `'/ws'`) |
 | `onSessionStart` | `(sessionId: string) => void` | — | Called when a new session starts |
 | `onSessionEnd` | `(sessionId: string) => void` | — | Called when a session ends |
 | `onTranscript` | `(sessionId: string, entry: TranscriptEntry) => void` | — | Called for every transcript message |
+| `onToolCall` | `(sessionId: string, name: string, args: Record<string, unknown>) => void` | — | Called when Gemini invokes a tool |
+| `onInterviewConcluded` | `(sessionId: string) => void` | — | Called when AI calls `conclude_interview` |
+| `onCodeSharingStarted` | `(sessionId: string) => void` | — | Called when AI calls `start_code_sharing` |
+| `onCodeSharingEnded` | `(sessionId: string) => void` | — | Called when AI calls `end_code_sharing` |
 
 **Methods:**
 
 | Method | Description |
 |---|---|
-| `attach(httpServer)` | Attach WS server to an existing `http.Server`. Auto-detects model if not configured. |
-| `listen(port)` | Start a standalone HTTP + WS server on the given port. |
-| `detectModel()` | Manually trigger model auto-detection. Returns `{ model, apiVersion }` or `null`. |
-| `close()` | Gracefully shut down the WS server. |
-
-#### `detectLiveModel(apiKey)`
-
-Queries the Gemini ListModels endpoint to find models supporting `bidiGenerateContent`. Returns `{ version, modelId }` or `null`.
+| `attach(httpServer)` | Attach WS server to an existing `http.Server` |
+| `listen(port)` | Start a standalone HTTP + WS server on the given port |
+| `close()` | Gracefully shut down all sessions and the WS server |
 
 #### `GeminiSession`
 
-Low-level class managing a single bidirectional WebSocket to Gemini. Used internally by `InterviewServer`; exposed for advanced use cases.
+Low-level class managing a single bidirectional WebSocket to Gemini. Handles audio streaming, transcription, tool calls, reconnection, elapsed-time injection, and interruption gating. Used internally by `InterviewServer`; exposed for advanced use cases.
+
+#### `DEFAULT_TOOLS`, `Modality`, `Type`, `StartSensitivity`, `EndSensitivity`, `FunctionDeclaration`
+
+Re-exported from shared types and `@google/genai` for tool configuration.
 
 ---
 
-### `interview-agent/react`
+### `@lekvylabs/interview-agent/react`
 
 #### `useInterview(options)`
 
-React hook that manages the full interview lifecycle.
+React hook for direct WebSocket connection to `InterviewServer`. Manages mic capture, audio playback, and live transcript.
 
 ```ts
 const { status, transcript, isUserSpeaking, start, stop } = useInterview(options);
@@ -160,7 +189,7 @@ const { status, transcript, isUserSpeaking, start, stop } = useInterview(options
 
 #### `useLiveInterview(options)`
 
-Socket.IO hook for the NestJS-style live interview gateway.
+Socket.IO hook for the Lekvy Backend live-interview gateway. Supports code sharing, interviewer activity, and full session lifecycle.
 
 ```ts
 const {
@@ -193,7 +222,7 @@ const {
 | `status` | `'idle' \| 'connecting' \| 'active' \| 'error'` | Current live session status |
 | `transcript` | `TranscriptEntry[]` | Array of `{ role, text }` entries |
 | `isUserSpeaking` | `boolean` | `true` when the local mic energy exceeds the VAD threshold |
-| `interviewerActivity` | `'speaking' \| 'listening' \| 'thinking'` | Interviewer activity from socket events, with fallback to audio lifecycle events |
+| `interviewerActivity` | `'speaking' \| 'listening' \| 'thinking'` | Interviewer activity from socket events, with fallback to audio lifecycle |
 | `isAssistantSpeaking` | `boolean` | Convenience alias for `interviewerActivity === 'speaking'` |
 | `codeSharingActive` | `boolean` | `true` while the interviewer has active code sharing enabled |
 | `sharedCode` | `{ code: string; language?: string; title?: string } \| null` | Latest code-sharing payload from the server, or `null` when inactive |
@@ -203,7 +232,7 @@ const {
 **Example:**
 
 ```tsx
-import { useLiveInterview } from 'interview-agent/react';
+import { useLiveInterview } from '@lekvylabs/interview-agent/react';
 
 function LiveInterviewRoom() {
   const {
@@ -245,7 +274,7 @@ function LiveInterviewRoom() {
 
 #### `InterviewPanel`
 
-Pre-built React component rendering a complete interview UI. Accepts all `useInterview` options plus an optional `style` prop.
+Pre-built React component rendering a complete interview UI. Uses `useInterview` internally. Accepts all `useInterview` options plus an optional `style` prop.
 
 ```tsx
 <InterviewPanel wsUrl="ws://localhost:3001/ws" />
@@ -263,7 +292,7 @@ Pre-built React component rendering a complete interview UI. Accepts all `useInt
 
 ---
 
-### `interview-agent` (root)
+### `@lekvylabs/interview-agent` (root)
 
 Re-exports all shared types:
 
@@ -275,40 +304,49 @@ import type {
   InterviewStatus,
   ServerToClientMessage,
   ClientToServerMessage,
-} from 'interview-agent';
+} from '@lekvylabs/interview-agent';
 ```
 
 ---
 
 ## Wire Protocol
 
+### WebSocket (useInterview ↔ InterviewServer)
+
 **Browser → Server:**
 - **Binary frames:** Raw PCM Int16 LE, 16 kHz mono
-- **JSON frames:** `{ type: 'interrupt' }`
+- **JSON frames:** `{ type: 'interrupt' }` | `{ type: 'end-session' }`
 
 **Server → Browser (JSON):**
 
 | `type` | Payload | Description |
 |---|---|---|
 | `status` | `{ text: 'ready' \| 'gemini_disconnected' }` | Connection state changes |
-| `audio` | `{ data: string }` | Base64 PCM Int16 LE, 24 kHz mono |
-| `transcript` | `{ role, text }` | Real-time transcription |
+| `audio` | `{ data: string, mimeType?: string }` | Base64 PCM audio (24 kHz mono) |
+| `transcript` | `{ role, text, turnComplete?: boolean }` | Real-time transcription |
 | `turnComplete` | — | AI finished speaking |
+| `interrupted` | — | AI was cut off; stop playback |
+| `reconnecting` | `{ attempt, maxAttempts }` | Transparent reconnect in progress |
+| `session-ended` | — | Session terminated |
+| `interview-concluded` | — | AI ended interview via tool |
+| `code-sharing-started` | — | AI began code sharing |
+| `code-sharing-ended` | — | AI concluded code sharing |
+| `tool-call` | `{ name, args }` | Gemini invoked a tool |
 | `error` | `{ text: string }` | Error message |
 
-## Live Socket.IO Events
+### Live Socket.IO Events (useLiveInterview ↔ Lekvy Backend)
 
 For `useLiveInterview()` on the `/live-interview` namespace:
 
 **Client → Server:**
-- `audio-chunk` → `{ audio: string }`
+- `audio-chunk` → `{ audio: string }` (base64 16 kHz Int16 PCM)
 - `end-session` → no payload
 
 **Server → Client:**
 - `session-ready` → no payload
 - `audio-response` → `{ audio: string }`
 - `transcript` → `{ role: 'user' | 'model', text: string }`
-- `interviewer-activity` → `{ state: 'speaking' | 'listening' | 'thinking' }` (optional but recommended)
+- `interviewer-activity` → `{ state: 'speaking' | 'listening' | 'thinking' }` (optional)
 - `code-sharing-content` → `{ code: string, language?: string, title?: string }`
 - `interrupted` → no payload
 - `code-sharing-started` → no payload
@@ -324,13 +362,13 @@ For `useLiveInterview()` on the `/live-interview` namespace:
 ```
 src/
 ├── shared/
-│   └── types.ts          ← Wire protocol + config types (shared by both SDKs)
+│   └── types.ts             ← Wire protocol + config types (shared by both SDKs)
 ├── server/
 │   ├── interview-server.ts  ← InterviewServer class (main server SDK entry)
-│   ├── gemini-session.ts    ← Single Gemini WS session manager
-│   └── detect-model.ts      ← Auto-detect model + API version
+│   └── gemini-session.ts    ← Single Gemini Live session (audio, tools, reconnection)
 └── react/
-    ├── use-interview.ts     ← useInterview() hook (main React SDK entry)
+    ├── use-interview.ts     ← useInterview() hook (WebSocket → InterviewServer)
+    ├── use-live-interview.ts← useLiveInterview() hook (Socket.IO → Lekvy Backend)
     ├── interview-panel.tsx  ← <InterviewPanel> drop-in component
     ├── audio-capture.ts     ← AudioWorklet mic capture
     ├── audio-playback.ts    ← Gapless audio queue with interrupts
@@ -347,12 +385,4 @@ npm run check      # type-check with tsc
 npm run build      # build all three entry points with tsup
 npm run dev        # watch mode (rebuild on change)
 npm test           # run tests with vitest
-```
-
-### Demo app
-
-```bash
-npm run build
-GEMINI_API_KEY=your_key node demo/server.js   # backend on :3001
-cd demo && npm run dev                         # frontend on :5173
 ```
